@@ -466,22 +466,6 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 									}
 								}
 								Modem_Count = 20;
-								/*
-								if(soft_dtr == soft_rts) // Taken from Open-EC
-								{
-									INTF1_DTR = 1;
-									INTF1_RTS = 1;
-								}
-								if(soft_dtr == 1 && soft_rts == 0)
-								{
-									INTF1_RTS = 1;
-									INTF1_DTR = 0;
-								}
-								if(soft_dtr == 0 && soft_rts == 1)
-								{
-									INTF1_RTS = 0;
-									INTF1_DTR = 1;
-								}*/
 							}
 							else //intf2
 							{
@@ -511,24 +495,19 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 										//INTF2_RTS = 1;
 									}
 
-									if(soft_dtr_1 == 1 && soft_rts_1 == 1)
-									{
-										INTF2_DTR = 1;
-										INTF2_RTS = 1;
-									}
-									if(soft_dtr_1 == 0 && soft_rts_1 == 0)
-									{
-										INTF2_DTR = 1;
-										INTF2_RTS = 1;
-									}
-									if(soft_dtr_1 == 0 && soft_rts_1 == 1)
+									if(!soft_dtr_1 && soft_rts_1)
 									{
 										INTF2_DTR = 1;
 										INTF2_RTS = 0;
 									}
-									if(soft_dtr_1 == 1 && soft_rts_1 == 0)
+									else if(soft_dtr_1 && !soft_rts_1)
 									{
 										INTF2_DTR = 0;
+										INTF2_RTS = 1;
+									}
+									else if(soft_dtr_1 == soft_rts_1)
+									{
+										INTF2_DTR = 1;
 										INTF2_RTS = 1;
 									}
 
@@ -897,7 +876,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	}
 }
 
-#define USB_INTERVAL_FRAME 125	// micro seconds
+#define USB_INTERVAL_FRAME 1000	// micro seconds
 
 void SerialPort_Config()
 {
@@ -937,10 +916,11 @@ void SerialPort_Config()
 
 	//Timer0
 	T2MOD = (T2MOD | bTMR_CLK) & ~bT0_CLK;	// Fsys/12 = 2MHz
-	TMOD = TMOD | bT0_M1;					// Mode2: 8bit counter, Auto-reload
+	TMOD = TMOD | bT0_M0;					// Mode1: 16bit timer
 	PT0 = 0;								// Low priorty 
 	ET0 = 1;								// Interrupt enable
-	TH0 = (0 - FREQ_SYS / 12 / 1000000 * USB_INTERVAL_FRAME ) & 0xff; 
+	TH0 = (0 - FREQ_SYS / 12 / 1000000 * USB_INTERVAL_FRAME ) >> 8; 
+	TL0 = (0 - FREQ_SYS / 12 / 1000000 * USB_INTERVAL_FRAME ) & 0xff; 
 	TR0 = 1;								// Timer0 start
 }
 
@@ -971,16 +951,22 @@ __code uint8_t ESP_Boot_Sequence[] =
 // SOF packet symulator
 void Timer0_ISR(void) __interrupt (INT_NO_TMR0) 
 {
-	SOF_Count ++;
+	TH0 = (0 - FREQ_SYS / 12 / 1000000 * USB_INTERVAL_FRAME ) >> 8; 
+	TL0 = (0 - FREQ_SYS / 12 / 1000000 * USB_INTERVAL_FRAME ) & 0xff; 
+//	SOF_Count ++;
+	__asm
+		mov r0,#_SOF_Count
+		inc @r0
+	__endasm;
 	if(Modem_Count) Modem_Count --;
    	if(Modem_Count == 1)
 	{
-		if(soft_dtr == 0 && soft_rts)
+		if(!soft_dtr && soft_rts)
 		{
 			INTF1_RTS = 1;
 			INTF1_DTR = 0;
 		}
-		else if(soft_dtr && soft_rts == 0)
+		else if(soft_dtr && !soft_rts)
 		{
 			INTF1_RTS = 0;
 			INTF1_DTR = 1;
@@ -992,6 +978,7 @@ void Timer0_ISR(void) __interrupt (INT_NO_TMR0)
 			INTF1_RTS = 1;
 		}
 	}
+
 }
 
 #define FAST_RECEIVE
